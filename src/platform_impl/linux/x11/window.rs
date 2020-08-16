@@ -242,6 +242,14 @@ impl UnownedWindow {
             )
         };
 
+        unsafe {
+            (xconn.xlib.XSelectInput)(
+                xconn.display,
+                root,
+                ffi::PropertyChangeMask,
+            );
+        }
+
         let mut window = UnownedWindow {
             xconn: Arc::clone(xconn),
             xwindow,

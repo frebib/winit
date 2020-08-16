@@ -1157,66 +1157,20 @@ impl<T: 'static> EventProcessor<T> {
                     _ => {}
                 }
             }
+
+            ffi::PropertyNotify => {
+                let xev: &ffi::XPropertyEvent = xev.as_ref();
+
+                // XA_RESOURCE_MANAGER received from the root window indicates that xresources
+                // have been changed. Check and update Xft.dpi if the dpi value was changed.
+                if xev.atom == ffi::XA_RESOURCE_MANAGER {
+                    self.process_dpi_change(&mut callback)
+                }
+            }
+
             _ => {
                 if event_type == self.randr_event_offset {
-                    // In the future, it would be quite easy to emit monitor hotplug events.
-                    let prev_list = monitor::invalidate_cached_monitor_list();
-                    if let Some(prev_list) = prev_list {
-                        let new_list = wt.xconn.available_monitors();
-                        for new_monitor in new_list {
-                            prev_list
-                                .iter()
-                                .find(|prev_monitor| prev_monitor.name == new_monitor.name)
-                                .map(|prev_monitor| {
-                                    if new_monitor.scale_factor != prev_monitor.scale_factor {
-                                        for (window_id, window) in wt.windows.borrow().iter() {
-                                            if let Some(window) = window.upgrade() {
-                                                // Check if the window is on this monitor
-                                                let monitor = window.current_monitor();
-                                                if monitor.name == new_monitor.name {
-                                                    let (width, height) =
-                                                        window.inner_size_physical();
-                                                    let (new_width, new_height) = window
-                                                        .adjust_for_dpi(
-                                                            prev_monitor.scale_factor,
-                                                            new_monitor.scale_factor,
-                                                            width,
-                                                            height,
-                                                            &*window.shared_state.lock(),
-                                                        );
-
-                                                    let window_id = crate::window::WindowId(
-                                                        crate::platform_impl::platform::WindowId::X(
-                                                            *window_id,
-                                                        ),
-                                                    );
-                                                    let old_inner_size =
-                                                        PhysicalSize::new(width, height);
-                                                    let mut new_inner_size =
-                                                        PhysicalSize::new(new_width, new_height);
-
-                                                    callback(Event::WindowEvent {
-                                                        window_id,
-                                                        event: WindowEvent::ScaleFactorChanged {
-                                                            scale_factor: new_monitor.scale_factor,
-                                                            new_inner_size: &mut new_inner_size,
-                                                        },
-                                                    });
-
-                                                    if new_inner_size != old_inner_size {
-                                                        let (new_width, new_height) =
-                                                            new_inner_size.into();
-                                                        window.set_inner_size_physical(
-                                                            new_width, new_height,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                });
-                        }
-                    }
+                    self.process_dpi_change(&mut callback)
                 }
             }
         }
@@ -1275,6 +1229,74 @@ impl<T: 'static> EventProcessor<T> {
                     is_synthetic: true,
                 },
             });
+        }
+    }
+
+    fn process_dpi_change<F>(
+        &self,
+        callback: &mut F,
+    ) where
+        F: FnMut(Event<'_, T>)
+    {
+        let wt = get_xtarget(&self.target);
+
+        // In the future, it would be quite easy to emit monitor hotplug events.
+        let prev_list = monitor::invalidate_cached_monitor_list();
+        if let Some(prev_list) = prev_list {
+            let new_list = wt.xconn.available_monitors();
+            for new_monitor in new_list {
+                prev_list
+                    .iter()
+                    .find(|prev_monitor| prev_monitor.name == new_monitor.name)
+                    .map(|prev_monitor| {
+                        if new_monitor.scale_factor != prev_monitor.scale_factor {
+                            for (window_id, window) in wt.windows.borrow().iter() {
+                                if let Some(window) = window.upgrade() {
+                                    // Check if the window is on this monitor
+                                    let monitor = window.current_monitor();
+                                    if monitor.name == new_monitor.name {
+                                        let (width, height) =
+                                            window.inner_size_physical();
+                                        let (new_width, new_height) = window
+                                            .adjust_for_dpi(
+                                                prev_monitor.scale_factor,
+                                                new_monitor.scale_factor,
+                                                width,
+                                                height,
+                                                &*window.shared_state.lock(),
+                                            );
+
+                                        let window_id = crate::window::WindowId(
+                                            crate::platform_impl::platform::WindowId::X(
+                                                *window_id,
+                                            ),
+                                        );
+                                        let old_inner_size =
+                                            PhysicalSize::new(width, height);
+                                        let mut new_inner_size =
+                                            PhysicalSize::new(new_width, new_height);
+
+                                        callback(Event::WindowEvent {
+                                            window_id,
+                                            event: WindowEvent::ScaleFactorChanged {
+                                                scale_factor: new_monitor.scale_factor,
+                                                new_inner_size: &mut new_inner_size,
+                                            },
+                                        });
+
+                                        if new_inner_size != old_inner_size {
+                                            let (new_width, new_height) =
+                                                new_inner_size.into();
+                                            window.set_inner_size_physical(
+                                                new_width, new_height,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+            }
         }
     }
 }
